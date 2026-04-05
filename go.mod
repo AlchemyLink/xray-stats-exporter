@@ -3,6 +3,8 @@ module github.com/alchemylink/xray-stats-exporter
 go 1.26.1
 
 require (
+	github.com/oschwald/geoip2-golang v1.13.0 // indirect
+	github.com/oschwald/maxminddb-golang v1.13.0 // indirect
 	github.com/pires/go-proxyproto v0.9.2 // indirect
 	github.com/sagernet/sing v0.5.1 // indirect
 	github.com/xtls/xray-core v1.260206.0 // indirect
