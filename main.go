@@ -11,6 +11,8 @@
 //   xray_handshake_failure_total{inbound}                — TLS handshake failures (TSPU block indicator)
 //   xray_connection_reset_total{inbound}                 — TCP RST events (TSPU block indicator)
 //   xray_probe_detected_total{inbound}                   — unexpected/garbage data (active probe)
+//   xray_inbound_throughput_bytes_per_second{inbound}    — current bytes/sec per inbound (gauge)
+//   xray_throughput_degradation_total{inbound}           — scrapes where rate dropped >70% below baseline
 //   xray_scrape_duration_seconds                         — scrape latency
 //   xray_up                                              — 1 if xray API reachable, 0 otherwise
 //
@@ -48,6 +50,13 @@ var (
 
 var geo *GeoCollector
 var tspu *TSPUCollector
+var throughput *ThroughputTracker
+
+// trafficStats holds cumulative uplink and downlink byte counters for one entity.
+type trafficStats struct {
+	uplink   int64
+	downlink int64
+}
 
 const dialTimeout = 5 * time.Second
 
@@ -131,11 +140,6 @@ func serveMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Collect per-user values
-	type trafficStats struct {
-		uplink   int64
-		downlink int64
-	}
-
 	users := make(map[string]*trafficStats)
 	if userErr == nil {
 		for _, s := range userStats {
@@ -180,6 +184,8 @@ func serveMetrics(w http.ResponseWriter, r *http.Request) {
 	} else {
 		log.Printf("inbound stats error: %v", inboundErr)
 	}
+
+	throughput.Update(inbounds)
 
 	// Write per-user metrics
 	fmt.Fprintf(w, "# HELP xray_user_uplink_bytes_total Cumulative uplink bytes per user\n")
@@ -268,6 +274,18 @@ func serveMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	rates, degradations := throughput.Snapshot()
+	fmt.Fprintf(w, "# HELP xray_inbound_throughput_bytes_per_second Current bytes/sec per inbound (combined up+down)\n")
+	fmt.Fprintf(w, "# TYPE xray_inbound_throughput_bytes_per_second gauge\n")
+	for inbound, rate := range rates {
+		fmt.Fprintf(w, "xray_inbound_throughput_bytes_per_second{inbound=%q} %g\n", inbound, rate)
+	}
+	fmt.Fprintf(w, "# HELP xray_throughput_degradation_total Scrapes where inbound rate dropped >70%% below rolling baseline\n")
+	fmt.Fprintf(w, "# TYPE xray_throughput_degradation_total counter\n")
+	for inbound, cnt := range degradations {
+		fmt.Fprintf(w, "xray_throughput_degradation_total{inbound=%q} %d\n", inbound, cnt)
+	}
+
 	fmt.Fprintf(w, "# HELP xray_up 1 if Xray API is reachable\n")
 	fmt.Fprintf(w, "# TYPE xray_up gauge\n")
 	fmt.Fprintf(w, "xray_up 1\n")
@@ -291,6 +309,8 @@ func main() {
 		tspu = newTSPUCollector(*errorLogPath)
 		log.Printf("TSPU detection metrics enabled: error_log=%s", *errorLogPath)
 	}
+
+	throughput = newThroughputTracker()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(*metricsPath, serveMetrics)
