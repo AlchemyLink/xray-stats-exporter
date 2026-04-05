@@ -8,12 +8,16 @@
 //   xray_user_last_country{email,country,city}           — last seen geo location per user (gauge=1)
 //   xray_user_connections_total{email,country,city}      — connections seen per user per location
 //   xray_inbound_connections_total{inbound,country}      — connections per inbound per country
+//   xray_handshake_failure_total{inbound}                — TLS handshake failures (TSPU block indicator)
+//   xray_connection_reset_total{inbound}                 — TCP RST events (TSPU block indicator)
+//   xray_probe_detected_total{inbound}                   — unexpected/garbage data (active probe)
 //   xray_scrape_duration_seconds                         — scrape latency
 //   xray_up                                              — 1 if xray API reachable, 0 otherwise
 //
 // Usage:
 //   xray-stats-exporter [--listen=127.0.0.1:9551] [--xray-endpoint=127.0.0.1:10085]
 //                       [--metrics-path=/metrics] [--log-path=/var/log/Xray/access.log]
+//                       [--error-log-path=/var/log/Xray/error.log]
 //                       [--geo-city-db=/var/lib/xray-exporter/GeoLite2-City.mmdb]
 //                       [--geo-asn-db=/var/lib/xray-exporter/GeoLite2-ASN.mmdb]
 package main
@@ -37,11 +41,13 @@ var (
 	metricsPath  = flag.String("metrics-path", "/metrics", "HTTP path for metrics")
 	xrayEndpoint = flag.String("xray-endpoint", "127.0.0.1:10085", "Xray gRPC API address")
 	logPath      = flag.String("log-path", "", "Path to Xray access.log for geo metrics (empty = disabled)")
+	errorLogPath = flag.String("error-log-path", "", "Path to Xray error.log for TSPU detection metrics (empty = disabled)")
 	geoCityDB    = flag.String("geo-city-db", "", "Path to GeoLite2-City.mmdb (empty = disabled)")
 	geoASNDB     = flag.String("geo-asn-db", "", "Path to GeoLite2-ASN.mmdb (empty = geo ASN label disabled)")
 )
 
 var geo *GeoCollector
+var tspu *TSPUCollector
 
 const dialTimeout = 5 * time.Second
 
@@ -239,6 +245,29 @@ func serveMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Write TSPU detection metrics if error log collector is active
+	if tspu != nil {
+		handshake, resets, probes := tspu.snapshot()
+
+		fmt.Fprintf(w, "# HELP xray_handshake_failure_total TLS handshake failures per inbound (TSPU block indicator)\n")
+		fmt.Fprintf(w, "# TYPE xray_handshake_failure_total counter\n")
+		for inbound, cnt := range handshake {
+			fmt.Fprintf(w, "xray_handshake_failure_total{inbound=%q} %d\n", inbound, cnt)
+		}
+
+		fmt.Fprintf(w, "# HELP xray_connection_reset_total TCP RST events per inbound (TSPU block indicator)\n")
+		fmt.Fprintf(w, "# TYPE xray_connection_reset_total counter\n")
+		for inbound, cnt := range resets {
+			fmt.Fprintf(w, "xray_connection_reset_total{inbound=%q} %d\n", inbound, cnt)
+		}
+
+		fmt.Fprintf(w, "# HELP xray_probe_detected_total Unexpected/garbage data per inbound (active probe indicator)\n")
+		fmt.Fprintf(w, "# TYPE xray_probe_detected_total counter\n")
+		for inbound, cnt := range probes {
+			fmt.Fprintf(w, "xray_probe_detected_total{inbound=%q} %d\n", inbound, cnt)
+		}
+	}
+
 	fmt.Fprintf(w, "# HELP xray_up 1 if Xray API is reachable\n")
 	fmt.Fprintf(w, "# TYPE xray_up gauge\n")
 	fmt.Fprintf(w, "xray_up 1\n")
@@ -256,6 +285,11 @@ func main() {
 		if geo != nil {
 			log.Printf("Geo metrics enabled: log=%s city_db=%s", *logPath, *geoCityDB)
 		}
+	}
+
+	if *errorLogPath != "" {
+		tspu = newTSPUCollector(*errorLogPath)
+		log.Printf("TSPU detection metrics enabled: error_log=%s", *errorLogPath)
 	}
 
 	mux := http.NewServeMux()
