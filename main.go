@@ -215,21 +215,15 @@ func serveMetrics(w http.ResponseWriter, r *http.Request) {
 
 	// Write geo metrics if GeoCollector is active
 	if geo != nil {
-		_, userConns, ibConns := geo.snapshot()
+		userGeo, userConns, ibConns := geo.snapshot()
 
-		// Reconstruct last-seen geo per user from userConns keys
-		lastGeo := make(map[string][2]string) // email → [country, city]
-		for key := range userConns {
-			parts := strings.SplitN(key, "\x00", 3)
-			if len(parts) == 3 {
-				lastGeo[parts[0]] = [2]string{parts[1], parts[2]}
-			}
-		}
-
-		fmt.Fprintf(w, "# HELP xray_user_last_country Last seen country/city for user (gauge=1 per user)\n")
+		fmt.Fprintf(w, "# HELP xray_user_last_country Last seen country/city/coordinates for user (gauge=1 per user)\n")
 		fmt.Fprintf(w, "# TYPE xray_user_last_country gauge\n")
-		for email, gc := range lastGeo {
-			fmt.Fprintf(w, "xray_user_last_country{email=%q,country=%q,city=%q} 1\n", email, gc[0], gc[1])
+		for email, gi := range userGeo {
+			fmt.Fprintf(w, "xray_user_last_country{email=%q,country=%q,city=%q,lat=%q,lon=%q} 1\n",
+				email, gi.Country, gi.City,
+				fmt.Sprintf("%.4f", gi.Lat),
+				fmt.Sprintf("%.4f", gi.Lon))
 		}
 
 		fmt.Fprintf(w, "# HELP xray_user_connections_total Connections seen per user per geo location\n")

@@ -44,11 +44,13 @@ func parseLogLine(line string) *logEntry {
 	return &logEntry{srcIP: ip, email: email, inbound: m[2]}
 }
 
-// GeoInfo holds resolved city/country for an IP.
+// GeoInfo holds resolved city/country/coordinates for an IP.
 type GeoInfo struct {
 	Country string
 	City    string
 	ASN     string
+	Lat     float64
+	Lon     float64
 }
 
 // GeoCollector reads access.log and exposes per-user/per-inbound geo metrics.
@@ -105,6 +107,8 @@ func (g *GeoCollector) lookup(ip net.IP) GeoInfo {
 		if name, ok := rec.City.Names["en"]; ok && name != "" {
 			info.City = name
 		}
+		info.Lat = rec.Location.Latitude
+		info.Lon = rec.Location.Longitude
 	}
 	if g.asnDB != nil {
 		asn, err := g.asnDB.ASN(ip)
