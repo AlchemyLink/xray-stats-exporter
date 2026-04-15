@@ -4,11 +4,14 @@ package main
 // active DPI interference or probe attempts. Three counter families:
 //
 //   xray_handshake_failure_total{inbound}  — TLS handshake rejected by peer
-//   xray_connection_reset_total{inbound}   — TCP RST received (TSPU block)
-//   xray_probe_detected_total{inbound}     — unexpected/garbage data (active probe)
+//   xray_connection_reset_total{inbound}   — TCP RST / forced close (TSPU block)
+//   xray_probe_detected_total{inbound}     — unexpected/garbage data or timeout (active probe)
 //
 // All counters use the inbound tag extracted from the log line, or "unknown"
 // when the tag is not present in that log line.
+//
+// Log rotation: on each poll the file inode is compared to the original.
+// If the file was replaced (logrotate), processLog returns and tailLog reopens.
 
 import (
 	"bufio"
@@ -29,9 +32,17 @@ var errorTagFallbackRe = regexp.MustCompile(`(?:inbound|proxy)[^:]*?/([a-zA-Z0-9
 
 // TSPU event patterns in Xray error log.
 var (
-	patHandshakeFailure = regexp.MustCompile(`(?i)handshake.failure|tls.*remote.error.*tls|tls.*alert.*handshake`)
-	patConnectionReset  = regexp.MustCompile(`(?i)connection.reset.by.peer|read:.connection.reset|wsarecv.*connection.reset`)
-	patProbe            = regexp.MustCompile(`(?i)unknown.record.type|bad.record.mac|unexpected.alpn|unexpected.eof|failed.to.unpack|not.tls.handshake|invalid.header`)
+	// TLS handshake aborted by the remote side — classic TSPU RST-during-handshake.
+	patHandshakeFailure = regexp.MustCompile(`(?i)handshake.failure|tls.*remote.error.*tls|tls.*alert.*handshake|tls.*timeout`)
+
+	// TCP RST or forced pipe close — TSPU drops the connection forcibly.
+	patConnectionReset = regexp.MustCompile(`(?i)connection.reset.by.peer|read:.connection.reset|wsarecv.*connection.reset|broken.pipe|write:.broken.pipe`)
+
+	// Active probe / DPI interference signatures:
+	//   - garbage/invalid TLS record sent by TSPU prober
+	//   - i/o timeout: TSPU throttles the stream to detect protocol
+	//   - context deadline exceeded: firewall-induced timeout mid-session
+	patProbe = regexp.MustCompile(`(?i)unknown.record.type|bad.record.mac|unexpected.alpn|unexpected.eof|failed.to.unpack|not.tls.handshake|invalid.header|i/o.timeout|context.deadline.exceeded`)
 )
 
 // TSPUCollector aggregates error-log TSPU event counters.
@@ -100,7 +111,13 @@ func (t *TSPUCollector) processLog() error {
 	}
 	defer f.Close()
 
-	// Tail from end — only new lines
+	// Remember the inode of the file we just opened so we can detect rotation.
+	openedFi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+
+	// Tail from end — only process new lines appended after startup.
 	if _, err := f.Seek(0, 2); err != nil {
 		return err
 	}
@@ -114,6 +131,13 @@ func (t *TSPUCollector) processLog() error {
 			return err
 		}
 		time.Sleep(2 * time.Second)
+
+		// Detect log rotation: if the path now points to a different inode,
+		// the file was replaced by logrotate. Return nil so tailLog reopens.
+		if curFi, err := os.Stat(t.logPath); err != nil || !os.SameFile(openedFi, curFi) {
+			return nil
+		}
+
 		scanner = bufio.NewScanner(f)
 	}
 }
