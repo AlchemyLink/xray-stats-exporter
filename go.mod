@@ -1,6 +1,6 @@
 module github.com/alchemylink/xray-stats-exporter
 
-go 1.25.7
+go 1.26
 
 require (
 	github.com/oschwald/geoip2-golang v1.13.0

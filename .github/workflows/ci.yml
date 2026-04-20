@@ -6,58 +6,92 @@ on:
   pull_request:
     branches: [main, develop]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.26"
+  GOFLAGS: "-buildvcs=false"
+
+permissions:
+  contents: read
+
 jobs:
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - run: go test ./... -race -count=1
-
-  vet:
-    name: Vet
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - run: go vet ./...
-
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Go environment
+        uses: ./.github/actions/setup-go-env
         with:
-          go-version-file: go.mod
-          cache: true
-      - uses: golangci/golangci-lint-action@v7
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
         with:
-          version: v2.11.4
+          version: v2.11.3
           args: --timeout=5m
 
-  mod-tidy:
-    name: Module tidy
+  test:
+    name: Unit Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Go environment
+        uses: ./.github/actions/setup-go-env
         with:
-          go-version-file: go.mod
-          cache: true
-      - run: go mod tidy && git diff --exit-code go.mod go.sum
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run tests
+        run: go test ./... -race -timeout 2m -coverprofile=coverage.txt -covermode=atomic
+
+  vet:
+    name: Go Vet
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Go environment
+        uses: ./.github/actions/setup-go-env
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run go vet
+        run: go vet ./...
+
+  mod-tidy-check:
+    name: Go Mod Tidy Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Go environment
+        uses: ./.github/actions/setup-go-env
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Verify go.mod and go.sum are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
 
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [test, vet, lint]
+    timeout-minutes: 10
+    needs: [lint, test, vet, mod-tidy-check]
     strategy:
       matrix:
         include:
@@ -70,11 +104,14 @@ jobs:
           - goos: darwin
             goarch: arm64
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Go environment
+        uses: ./.github/actions/setup-go-env
         with:
-          go-version-file: go.mod
-          cache: true
+          go-version: ${{ env.GO_VERSION }}
+
       - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
         env:
           GOOS: ${{ matrix.goos }}
