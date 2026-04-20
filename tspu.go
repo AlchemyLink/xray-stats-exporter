@@ -109,7 +109,7 @@ func (t *TSPUCollector) processLog() error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Remember the inode of the file we just opened so we can detect rotation.
 	openedFi, err := f.Stat()

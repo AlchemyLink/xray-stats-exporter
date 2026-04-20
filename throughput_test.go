@@ -51,47 +51,6 @@ func TestRateWindowRingOverwrite(t *testing.T) {
 	}
 }
 
-func makeInbounds(uplink, downlink int64) map[string]*trafficStats {
-	return map[string]*trafficStats{
-		"vless-in": {uplink: uplink, downlink: downlink},
-	}
-}
-
-// fillBaseline calls Update windowSize+1 times with growing values so the
-// tracker has a full baseline window of ~ratePerSec bytes/sec before the test.
-func fillBaseline(tt *ThroughputTracker, ratePerSec int64) {
-	const interval = 15 * time.Second
-	base := time.Now().Add(-time.Duration(windowSize+2) * interval)
-
-	var cumBytes int64
-	for i := 0; i <= windowSize+1; i++ {
-		cumBytes += ratePerSec * int64(interval.Seconds())
-		ts := base.Add(time.Duration(i) * interval)
-		inbounds := map[string]*trafficStats{
-			"vless-in": {uplink: cumBytes / 2, downlink: cumBytes / 2},
-		}
-		tt.mu.Lock()
-		tt.prev["vless-in"] = &inboundSample{
-			uplink:   inbounds["vless-in"].uplink,
-			downlink: inbounds["vless-in"].downlink,
-			at:       ts,
-		}
-		tt.mu.Unlock()
-
-		if i > 0 {
-			// compute rate manually to push into window
-			prev := (cumBytes - ratePerSec*int64(interval.Seconds()))
-			rate := float64(cumBytes-prev) / interval.Seconds()
-			tt.mu.Lock()
-			if _, ok := tt.windows["vless-in"]; !ok {
-				tt.windows["vless-in"] = &rateWindow{}
-			}
-			tt.windows["vless-in"].push(rate)
-			tt.mu.Unlock()
-		}
-	}
-}
-
 func TestThroughputDegradationDetected(t *testing.T) {
 	tt := newThroughputTracker()
 

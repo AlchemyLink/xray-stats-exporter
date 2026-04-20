@@ -134,7 +134,7 @@ func (g *GeoCollector) processLog() error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Seek to end to tail only new lines
 	if _, err := f.Seek(0, 2); err != nil {
