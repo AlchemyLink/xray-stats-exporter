@@ -128,6 +128,83 @@ func TestProcessLineNoMatch(t *testing.T) {
 	}
 }
 
+func TestEnsureInboundsSeedsZeros(t *testing.T) {
+	tc := &TSPUCollector{
+		handshakeFailures: make(map[string]int64),
+		connectionResets:  make(map[string]int64),
+		probesDetected:    make(map[string]int64),
+	}
+
+	tc.EnsureInbounds([]string{"vless-reality-in", "vless-xhttp-in"})
+
+	for _, tag := range []string{"vless-reality-in", "vless-xhttp-in"} {
+		if v, ok := tc.handshakeFailures[tag]; !ok || v != 0 {
+			t.Errorf("handshakeFailures[%q] = (%d, %v), want (0, true)", tag, v, ok)
+		}
+		if v, ok := tc.connectionResets[tag]; !ok || v != 0 {
+			t.Errorf("connectionResets[%q] = (%d, %v), want (0, true)", tag, v, ok)
+		}
+		if v, ok := tc.probesDetected[tag]; !ok || v != 0 {
+			t.Errorf("probesDetected[%q] = (%d, %v), want (0, true)", tag, v, ok)
+		}
+	}
+}
+
+func TestEnsureInboundsPreservesExistingCounts(t *testing.T) {
+	tc := &TSPUCollector{
+		handshakeFailures: map[string]int64{"vless-reality-in": 7},
+		connectionResets:  map[string]int64{"vless-reality-in": 3},
+		probesDetected:    make(map[string]int64),
+	}
+
+	tc.EnsureInbounds([]string{"vless-reality-in", "vless-xhttp-in"})
+
+	if tc.handshakeFailures["vless-reality-in"] != 7 {
+		t.Errorf("existing handshakeFailures count overwritten: got %d, want 7",
+			tc.handshakeFailures["vless-reality-in"])
+	}
+	if tc.connectionResets["vless-reality-in"] != 3 {
+		t.Errorf("existing connectionResets count overwritten: got %d, want 3",
+			tc.connectionResets["vless-reality-in"])
+	}
+	if tc.probesDetected["vless-xhttp-in"] != 0 {
+		t.Errorf("new tag not seeded in probesDetected")
+	}
+}
+
+func TestEnsureInboundsEmptyInputIsNoOp(t *testing.T) {
+	tc := &TSPUCollector{
+		handshakeFailures: map[string]int64{"vless-reality-in": 5},
+		connectionResets:  make(map[string]int64),
+		probesDetected:    make(map[string]int64),
+	}
+
+	tc.EnsureInbounds(nil)
+	tc.EnsureInbounds([]string{})
+
+	if len(tc.handshakeFailures) != 1 || tc.handshakeFailures["vless-reality-in"] != 5 {
+		t.Errorf("empty EnsureInbounds mutated state: %+v", tc.handshakeFailures)
+	}
+}
+
+func TestSnapshotAfterEnsureInboundsEmitsZeroedSeries(t *testing.T) {
+	tc := &TSPUCollector{
+		handshakeFailures: make(map[string]int64),
+		connectionResets:  make(map[string]int64),
+		probesDetected:    make(map[string]int64),
+	}
+
+	tc.EnsureInbounds([]string{"vless-reality-in"})
+	h, r, p := tc.snapshot()
+
+	if _, ok := h[" vless-reality-in"]; ok {
+		t.Fatal("unexpected key with leading space")
+	}
+	if len(h) != 1 || len(r) != 1 || len(p) != 1 {
+		t.Errorf("snapshot sizes after seed: h=%d r=%d p=%d, want 1 each", len(h), len(r), len(p))
+	}
+}
+
 func TestProcessLinePriorityHandshakeOverReset(t *testing.T) {
 	// A line containing both handshake and reset keywords hits the first matching branch.
 	tc := &TSPUCollector{

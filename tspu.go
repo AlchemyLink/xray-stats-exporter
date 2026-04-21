@@ -95,6 +95,29 @@ func (t *TSPUCollector) processLine(line string) {
 	t.mu.Unlock()
 }
 
+// EnsureInbounds guarantees that each given inbound tag has a zero-valued entry
+// in all three TSPU counter maps. Called by the scrape handler with the list
+// of inbounds known to Xray so that Grafana renders "0 events" rather than
+// "No data" on quiet inbounds that never triggered a TSPU pattern.
+func (t *TSPUCollector) EnsureInbounds(tags []string) {
+	if len(tags) == 0 {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, tag := range tags {
+		if _, ok := t.handshakeFailures[tag]; !ok {
+			t.handshakeFailures[tag] = 0
+		}
+		if _, ok := t.connectionResets[tag]; !ok {
+			t.connectionResets[tag] = 0
+		}
+		if _, ok := t.probesDetected[tag]; !ok {
+			t.probesDetected[tag] = 0
+		}
+	}
+}
+
 func (t *TSPUCollector) tailLog() {
 	for {
 		if err := t.processLog(); err != nil {

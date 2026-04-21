@@ -187,6 +187,17 @@ func serveMetrics(w http.ResponseWriter, r *http.Request) {
 
 	throughput.Update(inbounds)
 
+	// Seed TSPU counters with zeros for every known inbound so the dashboard
+	// shows "0 events" rather than "No data" on inbounds that have not yet
+	// triggered a TSPU pattern match.
+	if tspu != nil && len(inbounds) > 0 {
+		tags := make([]string, 0, len(inbounds))
+		for tag := range inbounds {
+			tags = append(tags, tag)
+		}
+		tspu.EnsureInbounds(tags)
+	}
+
 	// Write per-user metrics
 	fmt.Fprintf(w, "# HELP xray_user_uplink_bytes_total Cumulative uplink bytes per user\n")
 	fmt.Fprintf(w, "# TYPE xray_user_uplink_bytes_total counter\n")
