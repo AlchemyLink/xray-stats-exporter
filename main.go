@@ -26,6 +26,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
@@ -46,7 +48,26 @@ var (
 	errorLogPath = flag.String("error-log-path", "", "Path to Xray error.log for TSPU detection metrics (empty = disabled)")
 	geoCityDB    = flag.String("geo-city-db", "", "Path to GeoLite2-City.mmdb (empty = disabled)")
 	geoASNDB     = flag.String("geo-asn-db", "", "Path to GeoLite2-ASN.mmdb (empty = geo ASN label disabled)")
+	// anonymizeSecret enables pseudonymising email labels before they leave the
+	// exporter so a downstream TSDB never holds raw emails. The same secret
+	// must be configured on raven-dashboard for its per-user PromQL queries
+	// to match the labels we emit. Empty disables the feature (raw emails).
+	anonymizeSecret = flag.String("anonymize-secret", "",
+		"If set, replace email labels with hex(sha256(secret||email))[:16]. "+
+			"Same secret must be configured on raven-dashboard.")
 )
+
+// obscureEmail returns a stable pseudonymous identifier for email when secret
+// is set, otherwise returns email unchanged. The 64-bit prefix gives ~10^9
+// users before a 1% birthday-collision — far past any realistic user fleet
+// for this project.
+func obscureEmail(secret, email string) string {
+	if secret == "" || email == "" {
+		return email
+	}
+	sum := sha256.Sum256([]byte(secret + ":" + email))
+	return hex.EncodeToString(sum[:8])
+}
 
 var geo *GeoCollector
 var tspu *TSPUCollector
@@ -202,13 +223,13 @@ func serveMetrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# HELP xray_user_uplink_bytes_total Cumulative uplink bytes per user\n")
 	fmt.Fprintf(w, "# TYPE xray_user_uplink_bytes_total counter\n")
 	for email, u := range users {
-		fmt.Fprintf(w, "xray_user_uplink_bytes_total{email=%q} %d\n", email, u.uplink)
+		fmt.Fprintf(w, "xray_user_uplink_bytes_total{email=%q} %d\n", obscureEmail(*anonymizeSecret, email), u.uplink)
 	}
 
 	fmt.Fprintf(w, "# HELP xray_user_downlink_bytes_total Cumulative downlink bytes per user\n")
 	fmt.Fprintf(w, "# TYPE xray_user_downlink_bytes_total counter\n")
 	for email, u := range users {
-		fmt.Fprintf(w, "xray_user_downlink_bytes_total{email=%q} %d\n", email, u.downlink)
+		fmt.Fprintf(w, "xray_user_downlink_bytes_total{email=%q} %d\n", obscureEmail(*anonymizeSecret, email), u.downlink)
 	}
 
 	// Write per-inbound metrics
@@ -232,7 +253,7 @@ func serveMetrics(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "# TYPE xray_user_last_country gauge\n")
 		for email, gi := range userGeo {
 			fmt.Fprintf(w, "xray_user_last_country{email=%q,country=%q,city=%q,lat=%q,lon=%q} 1\n",
-				email, gi.Country, gi.City,
+				obscureEmail(*anonymizeSecret, email), gi.Country, gi.City,
 				fmt.Sprintf("%.4f", gi.Lat),
 				fmt.Sprintf("%.4f", gi.Lon))
 		}
@@ -242,7 +263,8 @@ func serveMetrics(w http.ResponseWriter, r *http.Request) {
 		for key, cnt := range userConns {
 			parts := strings.SplitN(key, "\x00", 3)
 			if len(parts) == 3 {
-				fmt.Fprintf(w, "xray_user_connections_total{email=%q,country=%q,city=%q} %d\n", parts[0], parts[1], parts[2], cnt)
+				fmt.Fprintf(w, "xray_user_connections_total{email=%q,country=%q,city=%q} %d\n",
+					obscureEmail(*anonymizeSecret, parts[0]), parts[1], parts[2], cnt)
 			}
 		}
 
