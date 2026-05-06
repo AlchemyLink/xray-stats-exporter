@@ -1,6 +1,6 @@
 # xray-stats-exporter
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/alchemylink/xray-stats-exporter)](https://goreportcard.com/report/github.com/alchemylink/xray-stats-exporter)
 [![CI](https://github.com/AlchemyLink/xray-stats-exporter/actions/workflows/ci.yml/badge.svg)](https://github.com/AlchemyLink/xray-stats-exporter/actions/workflows/ci.yml)
 [![Status](https://img.shields.io/badge/Status-Alpha%20Testing-orange)](https://github.com/AlchemyLink/xray-stats-exporter)
@@ -354,4 +354,10 @@ Works out of the box with [Raven-server-install](https://github.com/AlchemyLink/
 
 ## License
 
-[MIT](LICENSE) © AlchemyLink
+[GNU Affero General Public License v3.0 or later](LICENSE) © AlchemyLink contributors
+
+The project's README badge previously indicated MIT; on 2026-05-06 a formal
+LICENSE file was added under AGPL-3.0-or-later. Code at or before commit
+`0dfdd4f268917c17a333e37b6bd1ef7f7d42efb5` is available under either the previously-advertised
+MIT terms or AGPL-3.0-or-later, at the recipient's choice; subsequent commits
+are AGPL-3.0-or-later only.
