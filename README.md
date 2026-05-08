@@ -20,6 +20,7 @@ Built for self-hosted VPN operators who need to monitor user bandwidth, detect c
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Flags](#flags)
+- [Privacy & Security](#privacy--security)
 - [Systemd Service](#systemd-service)
 - [Xray Config Requirements](#xray-config-requirements)
 - [TSPU / DPI Detection](#tspu--dpi-detection)
@@ -153,6 +154,81 @@ curl -s http://127.0.0.1:9551/metrics | grep xray_
 | `--error-log-path` | `""` | Path to Xray `error.log` for TSPU detection metrics (empty = disabled) |
 | `--geo-city-db` | `""` | Path to `GeoLite2-City.mmdb` (empty = geo metrics disabled) |
 | `--geo-asn-db` | `""` | Path to `GeoLite2-ASN.mmdb` (empty = ASN label disabled) |
+| `--anonymize-secret` | `""` | If set, replace `email` labels with a stable 16-char hex pseudonym (see [Privacy & Security](#privacy--security)) |
+
+---
+
+## Privacy & Security
+
+### Listen address
+
+The exporter binds `127.0.0.1:9551` by default. `/metrics` has **no built-in
+authentication** — keep it on loopback or a private interface (WireGuard,
+private VPC). Set `--listen=0.0.0.0:9551` only when an upstream reverse
+proxy or firewall enforces who can scrape.
+
+### Email labels in metrics
+
+By default, per-user metrics carry the raw email from Xray's client config:
+
+```
+xray_user_uplink_bytes_total{email="alice@example.com"} 12345
+```
+
+This is what most operators want: human-readable labels in Grafana, easy
+debugging, direct mapping to subscription accounts. **It also means
+emails leave the host the moment Prometheus scrapes the endpoint** — they
+land in your TSDB, your dashboards, your alert payloads, your backups.
+
+### Pseudonymising emails — `--anonymize-secret`
+
+Pass a long random string (≥32 hex chars recommended) to replace the
+`email` label with a stable 16-char hex pseudonym:
+
+```bash
+SECRET=$(openssl rand -hex 32)
+xray-stats-exporter --anonymize-secret="$SECRET" …
+```
+
+The pseudonym is `hex(sha256(secret + ":" + email))[:16]`, deterministic
+per (secret, email) pair. Reversal requires the secret — without it, an
+operator (or attacker) reading the TSDB sees only opaque tokens.
+
+```
+xray_user_uplink_bytes_total{email="9d4f7c8b2a1e3f56"} 12345
+```
+
+When and why to use it:
+
+- **Strongly recommended** when the metrics endpoint is exposed beyond a
+  single trust boundary (multi-tenant TSDB, shared Grafana instance,
+  anything that survives the host).
+- **Optional** when Prometheus / VictoriaMetrics and Grafana run on the
+  same trusted host as the exporter and never leave it. The default of
+  raw emails is fine for single-operator self-hosted setups.
+
+If you pair this exporter with [raven-dashboard](https://github.com/AlchemyLink/raven-dashboard),
+configure the same secret on its side via `xray_stats_anonymize_secret`
+in `config.json` so dashboard PromQL queries keep matching the labels
+this exporter emits. Drift between the two values silently breaks
+per-user queries.
+
+### Tradeoff
+
+Anonymization comes at an operational cost: Grafana panels show hex
+tokens instead of `alice@example.com`, and any human investigation
+requires re-running the hash to find a user. Default-off keeps the
+exporter friendly for a default deploy; default-on would protect public
+demos at the cost of usability for the 90% case. Pick based on whether
+your TSDB is more like a private notebook or a shared facility.
+
+### Hardening checklist
+
+- [ ] `--listen` is loopback or private-interface only.
+- [ ] Reverse proxy / firewall enforces who can reach `:9551` if exposed.
+- [ ] Read-only systemd hardening (`ProtectSystem=strict`, `NoNewPrivileges`).
+- [ ] If multi-tenant TSDB or external Grafana → `--anonymize-secret` is set.
+- [ ] Xray gRPC API is on loopback (`127.0.0.1:10085`) — exporter dials over the loopback only.
 
 ---
 
