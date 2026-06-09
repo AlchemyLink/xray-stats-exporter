@@ -43,6 +43,28 @@ Built for self-hosted VPN operators who need to monitor user bandwidth, detect c
 | `xray_inbound_uplink_bytes_total` | counter | `inbound` | Cumulative uplink bytes per inbound tag |
 | `xray_inbound_downlink_bytes_total` | counter | `inbound` | Cumulative downlink bytes per inbound tag |
 
+### Hysteria2 reserve (trafficStats HTTP API)
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `hysteria_user_uplink_bytes_total` | counter | `email` | Cumulative bytes sent by user via the Hysteria2 reserve (API `rx`) |
+| `hysteria_user_downlink_bytes_total` | counter | `email` | Cumulative bytes received by user via the Hysteria2 reserve (API `tx`) |
+| `hysteria_user_online` | gauge | `email` | Current connection count per user |
+| `hysteria_up` | gauge | — | 1 if the hysteria trafficStats API is reachable |
+
+Requires `--hysteria-endpoint` (and `--hysteria-secret` when `trafficStats.secret` is set).
+With hysteria `auth.type:http` the user id equals the username returned by the auth
+backend, so the `email` label joins directly with `xray_user_*` (same `--anonymize-secret`
+hashing applies). Kept as a separate metric family from `xray_user_*` on purpose: the two
+underlying counters reset independently (xray vs hysteria restarts), and a merged counter
+would partially decrease on either reset, corrupting `increase()`-based accounting.
+Sum them in PromQL instead, e.g.:
+
+```promql
+sum(increase(xray_user_downlink_bytes_total{email="X"}[24h]))
+  + sum(increase(hysteria_user_downlink_bytes_total{email="X"}[24h])) or vector(0)
+```
+
 ### Throughput (computed per scrape)
 
 | Metric | Type | Labels | Description |
@@ -155,6 +177,8 @@ curl -s http://127.0.0.1:9551/metrics | grep xray_
 | `--geo-city-db` | `""` | Path to `GeoLite2-City.mmdb` (empty = geo metrics disabled) |
 | `--geo-asn-db` | `""` | Path to `GeoLite2-ASN.mmdb` (empty = ASN label disabled) |
 | `--anonymize-secret` | `""` | If set, replace `email` labels with a stable 16-char hex pseudonym (see [Privacy & Security](#privacy--security)) |
+| `--hysteria-endpoint` | `""` | Hysteria2 trafficStats API base URL, e.g. `http://127.0.0.1:9555` (empty = disabled) |
+| `--hysteria-secret` | `""` | `Authorization` secret for the trafficStats API (`trafficStats.secret`) |
 
 ---
 

@@ -15,6 +15,10 @@
 //   xray_throughput_degradation_total{inbound}           — scrapes where rate dropped >70% below baseline
 //   xray_scrape_duration_seconds                         — scrape latency
 //   xray_up                                              — 1 if xray API reachable, 0 otherwise
+//   hysteria_user_uplink_bytes_total{email="..."}        — cumulative uplink bytes per user via Hysteria2 reserve (rx)
+//   hysteria_user_downlink_bytes_total{email="..."}      — cumulative downlink bytes per user via Hysteria2 reserve (tx)
+//   hysteria_user_online{email="..."}                    — current connections per user on the Hysteria2 reserve
+//   hysteria_up                                          — 1 if hysteria trafficStats API reachable (only with --hysteria-endpoint)
 //
 // Usage:
 //   xray-stats-exporter [--listen=127.0.0.1:9551] [--xray-endpoint=127.0.0.1:10085]
@@ -55,6 +59,10 @@ var (
 	anonymizeSecret = flag.String("anonymize-secret", "",
 		"If set, replace email labels with hex(sha256(secret||email))[:16]. "+
 			"Same secret must be configured on raven-dashboard.")
+	hysteriaEndpoint = flag.String("hysteria-endpoint", "",
+		"Hysteria2 trafficStats API base URL, e.g. http://127.0.0.1:9555 (empty = disabled)")
+	hysteriaSecret = flag.String("hysteria-secret", "",
+		"Authorization secret for the Hysteria2 trafficStats API (trafficStats.secret)")
 )
 
 // obscureEmail returns a stable pseudonymous identifier for email when secret
@@ -147,6 +155,16 @@ func serveMetrics(w http.ResponseWriter, r *http.Request) {
 	elapsed := time.Since(start).Seconds()
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+
+	// The hysteria source is independent of Xray: emit its families even when
+	// the Xray API is down (and vice versa), so one daemon's outage never
+	// blinds monitoring to the other. Deferred so it runs after every return
+	// path below, including the xray-down early return.
+	defer func() {
+		if *hysteriaEndpoint != "" {
+			writeHysteriaMetrics(w, *hysteriaEndpoint, *hysteriaSecret, *anonymizeSecret)
+		}
+	}()
 
 	// If both queries failed, report xray as down
 	if userErr != nil && inboundErr != nil {
